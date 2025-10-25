@@ -1,0 +1,32 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "_note": "Adjust this template to match the current Railway CLI schema if needed.",
+  "services": {
+    "backend": {
+      "root": "./backend",
+      "build": {
+        "builder": "nixpacks"
+      },
+      "deploy": {
+        "startCommand": "uvicorn backend.main:app --host 0.0.0.0 --port $PORT",
+        "healthcheckPath": "/health"
+      },
+      "env": {
+        "PYTHON_VERSION": "3.11"
+      }
+    },
+    "frontend": {
+      "root": "./frontend",
+      "build": {
+        "builder": "nixpacks",
+        "buildCommand": "npm install && npm run build"
+      },
+      "deploy": {
+        "startCommand": "npm run start"
+      },
+      "env": {
+        "NODE_ENV": "production"
+      }
+    }
+  }
+}
