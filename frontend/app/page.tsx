@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AudioVisualizer } from "../components/AudioVisualizer";
 import { StreamControls } from "../components/StreamControls";
 import { VideoCapture, type PermissionState } from "../components/VideoCapture";
@@ -41,7 +41,20 @@ export default function HomePage() {
   });
   const [generalError, setGeneralError] = useState<string | null>(null);
 
+  // Use refs to track latest values for cleanup without triggering re-renders
+  const controllerRef = useRef<StreamingController | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+
   const chunkDuration = Number.isNaN(chunkDurationMs) ? undefined : chunkDurationMs;
+
+  // Update refs whenever state changes
+  useEffect(() => {
+    controllerRef.current = controller;
+  }, [controller]);
+
+  useEffect(() => {
+    mediaStreamRef.current = mediaStream;
+  }, [mediaStream]);
 
   useEffect(() => {
     const { audio, video } = createMediaStreams(mediaStream);
@@ -51,10 +64,11 @@ export default function HomePage() {
 
   useEffect(() => {
     return () => {
-      controller?.stop();
-      mediaStream?.getTracks().forEach((track) => track.stop());
+      // Cleanup on component unmount only - use refs to get latest values
+      controllerRef.current?.stop();
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     };
-  }, [controller, mediaStream]);
+  }, []); // Only run cleanup on unmount
 
   const requestPermissions = useCallback(async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -89,6 +103,12 @@ export default function HomePage() {
   }, [controller, mediaStream]);
 
   const handleStartStreaming = useCallback(() => {
+    // Prevent creating multiple controllers
+    if (controller) {
+      console.warn("Controller already exists, ignoring start request");
+      return;
+    }
+
     if (!audioStream || !videoStream) {
       setGeneralError("Media stream not ready. Grant access first.");
       return;
@@ -122,7 +142,7 @@ export default function HomePage() {
 
     controllerInstance.start();
     setController(controllerInstance);
-  }, [audioStream, audioWsUrl, chunkDuration, streamToken, videoStream, videoWsUrl]);
+  }, [controller, audioStream, audioWsUrl, chunkDuration, streamToken, videoStream, videoWsUrl]);
 
   const handleStopStreaming = useCallback(() => {
     controller?.stop();

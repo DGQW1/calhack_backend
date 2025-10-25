@@ -126,17 +126,25 @@ export class StreamingController {
     const stream = kind === "audio" ? this.audioStream : this.videoStream;
     const options = this.selectRecorderOptions(kind);
 
+    console.log(`[${kind}] Starting recorder. Stream tracks:`, stream.getTracks().length);
+    stream.getTracks().forEach((track, i) => {
+      console.log(`  Track ${i}: ${track.kind}, enabled: ${track.enabled}, readyState: ${track.readyState}`);
+    });
+
     try {
       const recorder = new MediaRecorder(stream, options);
       this.recorderMimeTypes[kind] = recorder.mimeType || options?.mimeType || this.recorderMimeTypes[kind];
 
       recorder.ondataavailable = async (event: BlobEvent) => {
+        console.log(`[${kind}] ondataavailable fired, data size:`, event.data?.size || 0);
         if (!event.data || event.data.size === 0) {
+          console.warn(`[${kind}] ondataavailable: empty data, skipping`);
           return;
         }
 
         try {
           const buffer = await event.data.arrayBuffer();
+          console.log(`[${kind}] sending chunk of ${buffer.byteLength} bytes`);
           this.sendChunk(kind, buffer);
         } catch (error) {
           this.handleError(kind, `Failed to process ${kind} chunk: ${(error as Error).message}`);
@@ -158,26 +166,59 @@ export class StreamingController {
         this.clearDataRequestTimer(kind);
       };
 
-      try {
-        recorder.start(this.chunkDuration);
-      } catch (startError) {
-        console.warn(`[${kind}] recorder.start(${this.chunkDuration}) failed, retrying without timeslice`, startError);
-        try {
-          recorder.start();
-          if (this.chunkDuration > 0) {
-            this.scheduleDataRequest(kind, recorder);
-          }
-        } catch (retryError) {
-          this.handleError(kind, `Unable to start MediaRecorder: ${(retryError as Error).message}`);
-          this.updateStatus(kind, "error");
-          return;
-        }
-      }
-
+      // Assign the recorder reference BEFORE starting it
+      // This ensures our duplicate check at the top of startRecorder can catch it
       if (kind === "audio") {
         this.audioRecorder = recorder;
       } else {
         this.videoRecorder = recorder;
+      }
+
+      try {
+        recorder.start(this.chunkDuration);
+        console.log(`[${kind}] recorder.start(${this.chunkDuration}) succeeded. State: ${recorder.state}`);
+      } catch (startError) {
+        // Check if recorder actually started despite the error
+        if (recorder.state === "recording") {
+          console.log(`[${kind}] recorder.start() threw error but recorder is recording. Continuing.`);
+          // It's actually working, continue normally
+        } else if (recorder.state === "inactive") {
+          // Genuinely failed, try without timeslice
+          console.warn(`[${kind}] recorder.start(${this.chunkDuration}) failed, retrying without timeslice`, startError);
+          try {
+            recorder.start();
+            if (this.chunkDuration > 0) {
+              this.scheduleDataRequest(kind, recorder);
+            }
+          } catch (retryError) {
+            // Check again if it started despite the error
+            // TypeScript's control flow analysis doesn't realize state can change after start() call
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            if ((recorder.state as RecordingState) === "recording") {
+              console.log(`[${kind}] recorder.start() threw error on retry but recorder is recording. Continuing.`);
+            } else {
+              this.handleError(kind, `Unable to start MediaRecorder: ${(retryError as Error).message}`);
+              this.updateStatus(kind, "error");
+              // Clean up the recorder reference on failure
+              if (kind === "audio") {
+                this.audioRecorder = undefined;
+              } else {
+                this.videoRecorder = undefined;
+              }
+              return;
+            }
+          }
+        } else {
+          // In some other unexpected state
+          this.handleError(kind, `Recorder in unexpected state '${recorder.state}' after failed start.`);
+          this.updateStatus(kind, "error");
+          if (kind === "audio") {
+            this.audioRecorder = undefined;
+          } else {
+            this.videoRecorder = undefined;
+          }
+          return;
+        }
       }
     } catch (error) {
       this.handleError(kind, `Unable to start MediaRecorder: ${(error as Error).message}`);
@@ -214,10 +255,12 @@ export class StreamingController {
 
     try {
       const socketUrl = this.composeSocketUrl(url);
+      console.log(`[${kind}] Opening WebSocket to ${socketUrl}`);
       const socket = new WebSocket(socketUrl);
       socket.binaryType = "arraybuffer";
 
       socket.onopen = () => {
+        console.log(`[${kind}] WebSocket connected`);
         this.updateStatus(kind, "connected");
       };
 
@@ -271,6 +314,7 @@ export class StreamingController {
   private sendChunk(kind: StreamKind, buffer: ArrayBuffer) {
     const socket = kind === "audio" ? this.audioSocket : this.videoSocket;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
+      console.warn(`[${kind}] Cannot send chunk: socket not ready. State: ${socket?.readyState}`);
       return;
     }
 
@@ -285,6 +329,7 @@ export class StreamingController {
       streamType: kind
     });
 
+    console.log(`[${kind}] Sending metadata and ${buffer.byteLength} bytes to server`);
     socket.send(metadata);
     socket.send(buffer);
   }
