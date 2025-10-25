@@ -278,8 +278,23 @@ export class StreamingController {
 
       socket.onmessage = (event) => {
         if (typeof event.data === "string") {
-          // Forward server messages to console for easier debugging.
-          console.debug(`[${kind}]`, event.data);
+          try {
+            const message = JSON.parse(event.data);
+            
+            // Handle connection summary messages with session IDs
+            if (message.type === "connection_summary" && message.session_id) {
+              // Dispatch a custom event for the VideoRecorder to listen to
+              window.dispatchEvent(new CustomEvent('sessionIdReceived', {
+                detail: { sessionId: message.session_id, streamType: kind }
+              }));
+            }
+            
+            // Forward server messages to console for easier debugging.
+            console.debug(`[${kind}]`, event.data);
+          } catch (error) {
+            // If it's not JSON, just log as before
+            console.debug(`[${kind}]`, event.data);
+          }
         }
       };
 

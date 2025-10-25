@@ -276,6 +276,167 @@ a {
   color: rgba(226, 232, 240, 0.8);
 }
 
+/* Video Recorder Styles */
+.current-session {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.current-session h3 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: rgba(226, 232, 240, 0.8);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.session-id {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #60a5fa;
+  margin: 0 0 12px;
+}
+
+.session-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sessions-list h3 {
+  margin: 0 0 16px;
+  font-size: 0.9rem;
+  color: rgba(226, 232, 240, 0.8);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.no-sessions {
+  color: rgba(148, 163, 184, 0.6);
+  font-style: italic;
+  text-align: center;
+  padding: 20px;
+}
+
+.sessions-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.session-card {
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.session-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-info h4 {
+  margin: 0 0 4px;
+  font-size: 0.9rem;
+  color: #e2e8f0;
+  font-family: monospace;
+}
+
+.session-date {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: rgba(148, 163, 184, 0.8);
+}
+
+.session-stats {
+  display: flex;
+  gap: 12px;
+  font-size: 0.75rem;
+  color: rgba(148, 163, 184, 0.7);
+}
+
+.session-stats span {
+  background: rgba(15, 23, 42, 0.6);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.session-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: fit-content;
+}
+
+.button-download {
+  background: linear-gradient(135deg, #34d399, #22d3ee);
+  box-shadow: 0 8px 20px rgba(45, 212, 191, 0.35);
+}
+
+.button-delete {
+  background: linear-gradient(135deg, #f87171, #ef4444);
+  box-shadow: 0 8px 20px rgba(248, 113, 113, 0.35);
+  color: #fef2f2;
+  font-size: 0.8rem;
+  padding: 8px 12px;
+}
+
+.error-message {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.error-message p {
+  margin: 0;
+  color: #fecaca;
+  font-size: 0.9rem;
+}
+
+.error-message button {
+  background: none;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  color: #fecaca;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.error-message button:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.session-id-display {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #60a5fa;
+  background: rgba(15, 23, 42, 0.6);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.status-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 @media (max-width: 640px) {
   .page-container {
     padding: 24px 16px 48px;

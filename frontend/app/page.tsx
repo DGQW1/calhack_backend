@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AudioVisualizer } from "../components/AudioVisualizer";
 import { StreamControls } from "../components/StreamControls";
 import { VideoCapture, type PermissionState } from "../components/VideoCapture";
+import { VideoRecorder } from "../components/VideoRecorder";
 import {
   StreamingController,
   type StreamConnectionState,
@@ -40,6 +41,7 @@ export default function HomePage() {
     video: null
   });
   const [generalError, setGeneralError] = useState<string | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
   // Use refs to track latest values for cleanup without triggering re-renders
   const controllerRef = useRef<StreamingController | null>(null);
@@ -231,6 +233,44 @@ export default function HomePage() {
           disabledReason={disabledReason}
           error={aggregatedError}
         />
+      </section>
+
+      <section className="grid-two">
+        <VideoRecorder
+          isStreaming={isStreaming}
+          connectionStates={connectionStates}
+          onSessionIdReceived={setCurrentSessionId}
+        />
+        
+        <div className="panel">
+          <div className="panel-heading">
+            <h2>Stream Status</h2>
+          </div>
+          <div className="status-content">
+            <ul className="status-list">
+              <li>
+                <span className="label">Audio Connection</span>
+                <span className={`status-badge status-${connectionStates.audio}`}>
+                  {connectionStates.audio}
+                </span>
+              </li>
+              <li>
+                <span className="label">Video Connection</span>
+                <span className={`status-badge status-${connectionStates.video}`}>
+                  {connectionStates.video}
+                </span>
+              </li>
+              {currentSessionId && (
+                <li>
+                  <span className="label">Session ID</span>
+                  <span className="session-id-display">
+                    {currentSessionId.slice(0, 8)}...
+                  </span>
+                </li>
+              )}
+            </ul>
+          </div>
+        </div>
       </section>
     </main>
   );
