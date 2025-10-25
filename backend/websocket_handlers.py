@@ -6,6 +6,8 @@ from typing import Any, Dict, Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from deepgram_client import DeepgramConfig, DeepgramTranscriber
+
 logger = logging.getLogger("backend.streams")
 
 
@@ -40,40 +42,84 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
     Returns aggregate stats when the connection closes gracefully.
     """
     stats = StreamStats(stream_type=stream_type)
+    deepgram_config = DeepgramConfig.from_env() if stream_type == "audio" else None
+    deepgram: Optional[DeepgramTranscriber] = None
+    last_client_metadata: Optional[Dict[str, Any]] = None
 
-    while True:
-        message = await websocket.receive()
-        message_type = message.get("type")
+    try:
+        while True:
+            message = await websocket.receive()
+            message_type = message.get("type")
 
-        if message_type == "websocket.disconnect":
-            raise WebSocketDisconnect(code=message.get("code", 1000))
+            if message_type == "websocket.disconnect":
+                raise WebSocketDisconnect(code=message.get("code", 1000))
 
-        chunk_bytes = message.get("bytes")
-        chunk_text = message.get("text")
+            chunk_bytes = message.get("bytes")
+            chunk_text = message.get("text")
 
-        metadata: Dict[str, Any] = {
-            "timestamp": _utc_timestamp(),
-            "stream_type": stream_type,
-        }
+            metadata: Dict[str, Any] = {
+                "timestamp": _utc_timestamp(),
+                "stream_type": stream_type,
+            }
 
-        if chunk_bytes is not None:
-            chunk_size = len(chunk_bytes)
-            metadata.update(
-                {
-                    "message_format": "binary",
-                    "chunk_size_bytes": chunk_size,
-                }
-            )
-            stats.bytes_received += chunk_size
-        elif chunk_text is not None:
-            metadata["message_format"] = "text"
-            metadata["chunk_size_bytes"] = len(chunk_text.encode("utf-8"))
-            client_meta = _extract_client_metadata(chunk_text)
-            if client_meta:
-                metadata["client_metadata"] = client_meta
-        else:
-            metadata["message_format"] = "unknown"
+            if chunk_bytes is not None:
+                chunk_size = len(chunk_bytes)
+                metadata.update(
+                    {
+                        "message_format": "binary",
+                        "chunk_size_bytes": chunk_size,
+                    }
+                )
+                stats.bytes_received += chunk_size
 
-        stats.chunks_received += 1
+                if stream_type == "audio":
+                    if deepgram_config and deepgram is None:
+                        deepgram = await _open_deepgram_transcriber(deepgram_config, last_client_metadata)
+                        if deepgram is None:
+                            deepgram_config = None
 
-        logger.info("%s", json.dumps(metadata, ensure_ascii=False))
+                    if deepgram:
+                        try:
+                            await deepgram.send_audio(chunk_bytes)
+                        except Exception:  # noqa: BLE001
+                            logger.exception("Failed to forward audio chunk to Deepgram.")
+
+            elif chunk_text is not None:
+                metadata["message_format"] = "text"
+                metadata["chunk_size_bytes"] = len(chunk_text.encode("utf-8"))
+                client_meta = _extract_client_metadata(chunk_text)
+                if client_meta:
+                    metadata["client_metadata"] = client_meta
+                    if stream_type == "audio":
+                        last_client_metadata = client_meta
+                        if deepgram_config and deepgram is None:
+                            deepgram = await _open_deepgram_transcriber(deepgram_config, last_client_metadata)
+                            if deepgram is None:
+                                deepgram_config = None
+            else:
+                metadata["message_format"] = "unknown"
+
+            stats.chunks_received += 1
+
+            logger.debug("%s", json.dumps(metadata, ensure_ascii=False))
+    finally:
+        if deepgram:
+            await deepgram.close()
+
+    return stats
+
+
+async def _open_deepgram_transcriber(
+    config: DeepgramConfig, client_metadata: Optional[Dict[str, Any]]
+) -> Optional[DeepgramTranscriber]:
+    transcriber = DeepgramTranscriber(config)
+    mime_type = None
+    if client_metadata:
+        mime_type = client_metadata.get("mimeType") or client_metadata.get("mime_type")
+    try:
+        await transcriber.connect(mime_type=mime_type)
+        return transcriber
+    except Exception:  # noqa: BLE001
+        logger.exception("Unable to establish Deepgram connection.")
+        await transcriber.close()
+        return None

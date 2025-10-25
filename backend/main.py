@@ -2,10 +2,13 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from websocket_handlers import StreamStats, handle_stream
+
+load_dotenv()
 
 
 logger = logging.getLogger("backend")
@@ -75,7 +78,7 @@ async def _websocket_entry(websocket: WebSocket, stream_type: str) -> None:
                 }
             )
     except WebSocketDisconnect:
-        logger.info("WebSocket disconnected for %s stream.", stream_type)
+        logger.debug("WebSocket disconnected for %s stream.", stream_type)
     except PermissionError:
         logger.warning("Rejected %s stream connection due to invalid token.", stream_type)
     except Exception as exc:  # noqa: BLE001
