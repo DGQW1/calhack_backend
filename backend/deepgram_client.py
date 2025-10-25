@@ -3,7 +3,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 from urllib.parse import urlencode
 
 import websockets
@@ -63,12 +63,16 @@ class DeepgramConfig:
         )
 
 
+TranscriptCallback = Callable[[str], Awaitable[None] | None]
+
+
 class DeepgramTranscriber:
-    def __init__(self, config: DeepgramConfig):
+    def __init__(self, config: DeepgramConfig, on_transcript: Optional[TranscriptCallback] = None):
         self._config = config
         self._socket: Optional[WebSocketClientProtocol] = None
         self._receiver_task: Optional[asyncio.Task[None]] = None
         self._closed = False
+        self._on_transcript = on_transcript
 
     async def connect(self, mime_type: Optional[str]) -> None:
         params = self._build_query_params(mime_type)
@@ -160,7 +164,7 @@ class DeepgramTranscriber:
                 transcript = self._extract_transcript(message)
                 if not transcript:
                     continue
-                logger.info("[Deepgram] %s", transcript)
+                await self._emit_transcript(transcript)
         except ConnectionClosedOK:
             logger.info("Deepgram connection closed cleanly.")
         except ConnectionClosedError as exc:
@@ -188,3 +192,20 @@ class DeepgramTranscriber:
         if not transcript:
             return None
         return transcript.strip() or None
+
+    async def _emit_transcript(self, transcript: str) -> None:
+        cleaned = transcript.strip()
+        if not cleaned:
+            return
+
+        logger.info("[Deepgram] %s", cleaned)
+
+        if not self._on_transcript:
+            return
+
+        try:
+            result = self._on_transcript(cleaned)
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:  # noqa: BLE001
+            logger.exception("Transcript callback failed.")

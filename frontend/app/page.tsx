@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AudioVisualizer } from "../components/AudioVisualizer";
-import { StreamControls } from "../components/StreamControls";
 import { VideoCapture, type PermissionState } from "../components/VideoCapture";
 import {
   StreamingController,
@@ -23,6 +22,14 @@ const chunkDurationMs = Number.parseInt(chunkDurationEnv, 10);
 const initialConnectionState: ConnectionStateMap = {
   audio: "idle",
   video: "idle"
+};
+
+const connectionStateLabels: Record<StreamConnectionState, string> = {
+  idle: "Idle",
+  connecting: "Connecting…",
+  connected: "Connected",
+  disconnected: "Disconnected",
+  error: "Error"
 };
 
 export default function HomePage() {
@@ -171,10 +178,26 @@ export default function HomePage() {
     return messages.length ? messages.join(" | ") : null;
   }, [generalError, streamErrors.audio, streamErrors.video]);
 
+  const blocked = permission !== "granted";
+  const primaryAction = isStreaming ? handleStopStreaming : handleStartStreaming;
+  const primaryLabel = isStreaming ? "Stop Streaming" : "Start Streaming";
+  const primaryDisabled = blocked || (!!disabledReason && !isStreaming);
+  const streamingButtonClass = `primary-button ${isStreaming ? "button-stop" : "button-start"}`;
+
+  const permissionButtonLabel =
+    permission === "granted" ? "Reinitialize Camera & Mic" : "Enable Camera & Mic";
+  const permissionButtonDisabled = permission === "pending";
+  const permissionBadgeLabel =
+    permission === "granted"
+      ? "Ready"
+      : permission === "pending"
+        ? "Requesting Access"
+        : "Permission Needed";
+
   return (
     <main className="page-container">
       <header className="page-header">
-        <h1>Real-Time Audio & Video Streaming</h1>
+        <h1>Kanting</h1>
         <p>
           Capture your camera and microphone, preview the feed locally, and stream both
           channels independently to the FastAPI backend in real time.
@@ -186,51 +209,73 @@ export default function HomePage() {
 
         <div className="panel">
           <div className="panel-heading">
-            <h2>Permission & Media Setup</h2>
+            <h2>Control Center</h2>
+            <span className={`status-badge status-${permission}`}>{permissionBadgeLabel}</span>
           </div>
 
-          <div className="permission-content">
+          <div className="control-buttons">
             <button
-              className="primary-button"
+              className="primary-button control-button"
               onClick={requestPermissions}
-              disabled={permission === "pending"}
+              disabled={permissionButtonDisabled}
             >
-              {permission === "granted" ? "Reinitialize Camera & Mic" : "Enable Camera & Mic"}
+              {permissionButtonLabel}
             </button>
-            <ul className="status-list">
-              <li>
-                <span className="label">Permissions</span>
-                <span className={`status-badge status-${permission}`}>{permission}</span>
-              </li>
-              <li>
-                <span className="label">Video Stream</span>
-                <span className={`status-badge ${videoStream ? "status-active" : "status-idle"}`}>
-                  {videoStream ? "Available" : "Unavailable"}
-                </span>
-              </li>
-              <li>
-                <span className="label">Audio Stream</span>
-                <span className={`status-badge ${audioStream ? "status-active" : "status-idle"}`}>
-                  {audioStream ? "Available" : "Unavailable"}
-                </span>
-              </li>
-            </ul>
+            <button
+              className={`${streamingButtonClass} control-button`}
+              onClick={primaryAction}
+              disabled={primaryDisabled}
+            >
+              {primaryLabel}
+            </button>
           </div>
+
+          {disabledReason && !isStreaming ? <p className="helper-text">{disabledReason}</p> : null}
+
+          <div className="control-status-columns">
+            <div className="status-column">
+              <h3>Media Sources</h3>
+              <ul className="status-list compact">
+                <li>
+                  <span className="label">Permissions</span>
+                  <span className={`status-badge status-${permission}`}>{permission}</span>
+                </li>
+                <li>
+                  <span className="label">Video Stream</span>
+                  <span className={`status-badge ${videoStream ? "status-active" : "status-idle"}`}>
+                    {videoStream ? "Available" : "Unavailable"}
+                  </span>
+                </li>
+                <li>
+                  <span className="label">Audio Stream</span>
+                  <span className={`status-badge ${audioStream ? "status-active" : "status-idle"}`}>
+                    {audioStream ? "Available" : "Unavailable"}
+                  </span>
+                </li>
+              </ul>
+            </div>
+            <div className="status-column connection-status">
+              <h3>Connection Status</h3>
+              <ul>
+                {(["video", "audio"] as StreamKind[]).map((kind) => (
+                  <li key={kind}>
+                    <span className="label">{kind.toUpperCase()}</span>
+                    <span className={`status-badge status-${connectionStates[kind]}`}>
+                      {connectionStateLabels[connectionStates[kind]]}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          {aggregatedError ? <p className="error-text">{aggregatedError}</p> : null}
         </div>
       </section>
 
       <section className="grid-two">
         <AudioVisualizer stream={audioStream} isActive={Boolean(audioStream)} />
 
-        <StreamControls
-          permission={permission}
-          isStreaming={isStreaming}
-          connectionStates={connectionStates}
-          onStart={handleStartStreaming}
-          onStop={handleStopStreaming}
-          disabledReason={disabledReason}
-          error={aggregatedError}
-        />
       </section>
     </main>
   );

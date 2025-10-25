@@ -2,10 +2,11 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from claude_client import ClaudeConfig, TranscriptSummarizer
 from deepgram_client import DeepgramConfig, DeepgramTranscriber
 
 logger = logging.getLogger("backend.streams")
@@ -45,6 +46,13 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
     deepgram_config = DeepgramConfig.from_env() if stream_type == "audio" else None
     deepgram: Optional[DeepgramTranscriber] = None
     last_client_metadata: Optional[Dict[str, Any]] = None
+    summarizer: Optional[TranscriptSummarizer] = None
+
+    if stream_type == "audio":
+        claude_config = ClaudeConfig.from_env()
+        if claude_config:
+            summarizer = TranscriptSummarizer(claude_config)
+            summarizer.start()
 
     try:
         while True:
@@ -74,7 +82,10 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
 
                 if stream_type == "audio":
                     if deepgram_config and deepgram is None:
-                        deepgram = await _open_deepgram_transcriber(deepgram_config, last_client_metadata)
+                        transcript_handler = summarizer.handle_transcript if summarizer else None
+                        deepgram = await _open_deepgram_transcriber(
+                            deepgram_config, last_client_metadata, transcript_handler
+                        )
                         if deepgram is None:
                             deepgram_config = None
 
@@ -101,14 +112,18 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
     finally:
         if deepgram:
             await deepgram.close()
+        if summarizer:
+            await summarizer.close()
 
     return stats
 
 
 async def _open_deepgram_transcriber(
-    config: DeepgramConfig, client_metadata: Optional[Dict[str, Any]]
+    config: DeepgramConfig,
+    client_metadata: Optional[Dict[str, Any]],
+    transcript_callback: Optional[Callable[[str], Awaitable[None] | None]],
 ) -> Optional[DeepgramTranscriber]:
-    transcriber = DeepgramTranscriber(config)
+    transcriber = DeepgramTranscriber(config, on_transcript=transcript_callback)
     mime_type = None
     if client_metadata:
         mime_type = client_metadata.get("mimeType") or client_metadata.get("mime_type")
