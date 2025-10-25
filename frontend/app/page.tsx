@@ -87,7 +87,7 @@ export default function HomePage() {
       mediaStream?.getTracks().forEach((track) => track.stop());
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" },
+        video: { facingMode: "environment" },
         audio: true
       });
 
