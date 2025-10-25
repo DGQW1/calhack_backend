@@ -46,8 +46,8 @@ export STREAMING_ACCESS_TOKEN=supersecret
 # Optional: lock down CORS origins ("*" by default)
 export CORS_ALLOW_ORIGINS=https://localhost:3000
 
-# When running from the backend/ directory use the module-relative path:
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+# Start the server (we're already in backend/ directory, so use main:app)
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Key endpoints:
@@ -111,8 +111,8 @@ These steps assume you already pushed the repository to GitHub.
 2. Set the service root to `backend/`.
 3. Build options:
    - Builder: **Nixpacks** (default)
-   - Install command: `pip install -r backend/requirements.txt`
-4. Start command: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
+   - Install command: `pip install -r requirements.txt` (since service root is `backend/`)
+4. Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
 5. Environment variables:
    - `STREAMING_ACCESS_TOKEN` (optional) – shared secret checked by the backend.
    - `CORS_ALLOW_ORIGINS` – CSV list of allowed origins (e.g., `https://your-frontend.up.railway.app`).

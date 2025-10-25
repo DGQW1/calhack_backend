@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from .websocket_handlers import StreamStats, handle_stream
+from websocket_handlers import StreamStats, handle_stream
 
 
 logger = logging.getLogger("backend")
