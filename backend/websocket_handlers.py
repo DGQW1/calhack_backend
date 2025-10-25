@@ -92,10 +92,6 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
                     metadata["client_metadata"] = client_meta
                     if stream_type == "audio":
                         last_client_metadata = client_meta
-                        if deepgram_config and deepgram is None:
-                            deepgram = await _open_deepgram_transcriber(deepgram_config, last_client_metadata)
-                            if deepgram is None:
-                                deepgram_config = None
             else:
                 metadata["message_format"] = "unknown"
 
