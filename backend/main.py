@@ -68,6 +68,24 @@ def _get_env_int(name: str, default: int) -> int:
 slide_storage = SlideStorage.from_env()
 keyframe_broadcaster = KeyframeBroadcaster()
 
+
+class SlideStaticFiles(StaticFiles):
+    """Static file handler that adds permissive headers for slide embedding."""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers.setdefault("Access-Control-Allow-Origin", "*")
+        response.headers.setdefault("Cross-Origin-Resource-Policy", "cross-origin")
+        return response
+
+
+if slide_storage.mode == "local" and slide_storage.local_dir is not None:
+    app.mount(
+        "/slides",
+        SlideStaticFiles(directory=str(slide_storage.local_dir.resolve())),
+        name="slides",
+    )
+
 slide_detection_params = SlideDetectionParams(
     tau_stable=_get_env_float("SLIDE_TAU_STABLE", 0.90),
     tau_change=_get_env_float("SLIDE_TAU_CHANGE", 0.75),
@@ -109,13 +127,11 @@ async def video_stream(websocket: WebSocket) -> None:
 
         lecture_id = websocket.query_params.get("lecture_id") or websocket.headers.get("x-lecture-id") or lecture_id
 
-        # Initialize keyframe detector
-        processor = VideoChunkProcessor(
-            lecture_id=lecture_id,
-            storage=slide_storage,
-            broadcaster=keyframe_broadcaster,
-            detector_params=slide_detection_params,
-        )
+        # Get or create a recording session for video compilation
+        from websocket_handlers import session_manager
+        session_id = await session_manager.get_or_create_session(stream_type)
+        session = video_storage.get_session(session_id)
+        logger.info(f"Using session {session_id} for {stream_type} stream with keyframe detection")
 
         await websocket.send_json(
             {
@@ -123,14 +139,18 @@ async def video_stream(websocket: WebSocket) -> None:
                 "stream_type": stream_type,
                 "received_at": start.isoformat(),
                 "lecture_id": lecture_id,
+                "session_id": session_id,
             }
         )
 
-        # Get or create a recording session for video compilation
-        from websocket_handlers import session_manager
-        session_id = await session_manager.get_or_create_session(stream_type)
-        session = video_storage.get_session(session_id)
-        logger.info(f"Using session {session_id} for {stream_type} stream with keyframe detection")
+        # Initialize keyframe detector with session-aware storage
+        processor = VideoChunkProcessor(
+            lecture_id=lecture_id,
+            storage=slide_storage,
+            broadcaster=keyframe_broadcaster,
+            detector_params=slide_detection_params,
+            session_id=session_id,
+        )
 
         stats = StreamStats(stream_type=stream_type, session_id=session_id)
         metadata_queue = []
@@ -242,6 +262,7 @@ async def video_keyframe_stream_endpoint(websocket: WebSocket) -> None:
         start = datetime.now(timezone.utc)
 
         lecture_id = websocket.query_params.get("lecture_id") or websocket.headers.get("x-lecture-id") or lecture_id
+        session_id = websocket.query_params.get("session_id") or websocket.headers.get("x-session-id")
 
         await websocket.send_json(
             {
@@ -249,6 +270,7 @@ async def video_keyframe_stream_endpoint(websocket: WebSocket) -> None:
                 "stream_type": stream_type,
                 "received_at": start.isoformat(),
                 "lecture_id": lecture_id,
+                "session_id": session_id,
             }
         )
 
@@ -257,6 +279,7 @@ async def video_keyframe_stream_endpoint(websocket: WebSocket) -> None:
             storage=slide_storage,
             broadcaster=keyframe_broadcaster,
             detector_params=slide_detection_params,
+            session_id=session_id,
         )
 
         stats = await handle_video_keyframe_stream(
@@ -481,3 +504,38 @@ async def delete_session(session_id: str) -> dict[str, str]:
 
 # Mount static files for serving recordings
 app.mount("/recordings", StaticFiles(directory="recordings"), name="recordings")
+
+
+@app.get("/api/sessions/{session_id}/slides")
+async def list_session_slides(session_id: str) -> dict[str, list[dict[str, str]]]:
+    """
+    Return the stored slide images for a given session.
+    """
+    if slide_storage.mode != "local":
+        raise HTTPException(status_code=501, detail="Slide listing is only supported in local storage mode.")
+
+    if slide_storage.local_dir is None:
+        return {"slides": []}
+
+    session_dir = slide_storage.local_dir / session_id
+    if not session_dir.exists():
+        return {"slides": []}
+
+    allowed_suffixes = {".jpg", ".jpeg", ".png"}
+    files = [
+        path
+        for path in session_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in allowed_suffixes
+    ]
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+    slides: list[dict[str, str]] = []
+    for file_path in files:
+        relative_key = f"{session_id}/{file_path.name}"
+        slides.append(
+            {
+                "storage_url": slide_storage.build_public_url(file_path.name, session_id=session_id),
+                "storage_key": relative_key,
+            }
+        )
+    return {"slides": slides}

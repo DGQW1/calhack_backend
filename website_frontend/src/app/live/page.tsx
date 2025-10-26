@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { usePageTitle } from '@/lib/PageTitleContext';
 import Image from 'next/image';
 
@@ -68,6 +68,16 @@ const Modal = ({ message, onClose }: { message: string, onClose: () => void }) =
   </div>
 );
 
+type SlideEntry = {
+  id: string;
+  url: string;
+  sessionId: string;
+  capturedAt?: string | null;
+  storageKey?: string | null;
+};
+
+const KEYFRAME_HISTORY_LIMIT = 24;
+
 /**
  * This component now acts as a "viewer" or "listener".
  * It connects to the backend and ONLY receives transcript updates.
@@ -75,19 +85,178 @@ const Modal = ({ message, onClose }: { message: string, onClose: () => void }) =
 export default function App() {
   const { setPageTitle } = usePageTitle();
   const webSocketRef = useRef<WebSocket | null>(null);
+  const keyframesSocketRef = useRef<WebSocket | null>(null);
   const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
   const wasConnectedRef = useRef(false);
+  const activeSessionIdRef = useRef<string | null>(null);
 
   const [isConnected, setIsConnected] = useState(false);
   const [transcription, setTranscription] = useState('');
   const [interimText, setInterimText] = useState('');
   const [modalMessage, setModalMessage] = useState<string | null>(null);
 
-  // Placeholder for future key visuals data source.
-  const [screenshots] = useState<string[]>([]);
+  const [screenshots, setScreenshots] = useState<SlideEntry[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
   // --- WebSocket Connection Logic ---
   const summaryWsUrl = process.env.NEXT_PUBLIC_SUMMARY_WS_URL || 'ws://localhost:8000/ws/summary';
+  const keyframesWsUrl = process.env.NEXT_PUBLIC_KEYFRAMES_WS_URL || 'ws://localhost:8000/ws/keyframes';
+  const apiBaseUrl = useMemo(() => {
+    const envBase = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+    if (envBase) {
+      return envBase.replace(/\/+$/, '');
+    }
+    if (!summaryWsUrl) {
+      return null;
+    }
+    try {
+      const ws = new URL(summaryWsUrl);
+      ws.protocol = ws.protocol === 'wss:' ? 'https:' : 'http:';
+      ws.pathname = '';
+      ws.search = '';
+      ws.hash = '';
+      return ws.toString().replace(/\/+$/, '');
+    } catch {
+      return null;
+    }
+  }, [summaryWsUrl]);
+
+  const slidesBaseUrl = useMemo(() => {
+    const envBase = process.env.NEXT_PUBLIC_SLIDES_BASE_URL?.trim();
+    if (envBase) {
+      return envBase.replace(/\/+$/, '');
+    }
+    if (!keyframesWsUrl) {
+      return null;
+    }
+    try {
+      const ws = new URL(keyframesWsUrl);
+      ws.protocol = ws.protocol === 'wss:' ? 'https:' : 'http:';
+      ws.pathname = '/slides';
+      ws.search = '';
+      ws.hash = '';
+      return ws.toString().replace(/\/+$/, '');
+    } catch {
+      return null;
+    }
+  }, [keyframesWsUrl]);
+
+  const resolveKeyframeUrl = useCallback(
+    (rawUrl: string | null | undefined) => {
+      if (!rawUrl) {
+        return null;
+      }
+      if (/^https?:\/\//i.test(rawUrl)) {
+        return rawUrl;
+      }
+      if (rawUrl.startsWith('file://')) {
+        if (!slidesBaseUrl) {
+          return null;
+        }
+        const normalized = rawUrl.replace(/\\/g, '/');
+        const idx = normalized.toLowerCase().lastIndexOf('/slide_storage/');
+        if (idx !== -1) {
+          const key = normalized.slice(idx + '/slide_storage/'.length);
+          if (key) {
+            return `${slidesBaseUrl}/${key}`;
+          }
+        }
+        return null;
+      }
+      if (rawUrl.startsWith('/slides/')) {
+        if (!slidesBaseUrl) {
+          return null;
+        }
+        return `${slidesBaseUrl}${rawUrl}`;
+      }
+      if (slidesBaseUrl && !rawUrl.includes('://')) {
+        return `${slidesBaseUrl}/${rawUrl.replace(/^\/+/, '')}`;
+      }
+      return rawUrl;
+    },
+    [slidesBaseUrl]
+  );
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
+  const loadSlides = useCallback(
+    async (sessionId: string) => {
+      if (!apiBaseUrl) {
+        return;
+      }
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/sessions/${sessionId}/slides`);
+        if (!response.ok) {
+          throw new Error(`Failed to load slides for session ${sessionId}: ${response.status}`);
+        }
+        const body = await response.json();
+        const entries: SlideEntry[] = [];
+        if (Array.isArray(body?.slides)) {
+          for (const item of body.slides) {
+            if (!item) {
+              continue;
+            }
+            const storageUrl = typeof item.storage_url === 'string' ? item.storage_url : null;
+            const storageKey = typeof item.storage_key === 'string' ? item.storage_key : null;
+            const resolved = resolveKeyframeUrl(storageUrl);
+            if (!resolved) {
+              continue;
+            }
+            entries.push({
+              id: storageKey || resolved,
+              url: resolved,
+              sessionId,
+              storageKey,
+            });
+          }
+        }
+        if (activeSessionIdRef.current === sessionId) {
+          setScreenshots(entries.slice(0, KEYFRAME_HISTORY_LIMIT));
+        }
+      } catch (error) {
+        console.error('Unable to fetch slides for session:', error);
+      }
+    },
+    [apiBaseUrl, resolveKeyframeUrl]
+  );
+
+  const fetchActiveSession = useCallback(async () => {
+    if (!apiBaseUrl) {
+      return;
+    }
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/sessions`);
+      if (!response.ok) {
+        throw new Error(`Failed to query sessions: ${response.status}`);
+      }
+      const body = await response.json();
+      const sessions = Array.isArray(body?.sessions) ? body.sessions : [];
+      const active =
+        sessions.find((session: any) => session && session.is_active) ?? sessions[0];
+      if (active?.session_id && active.session_id !== activeSessionIdRef.current) {
+        activeSessionIdRef.current = active.session_id;
+        setActiveSessionId(active.session_id);
+        setScreenshots([]);
+      }
+    } catch (error) {
+      console.error('Unable to fetch sessions list:', error);
+    }
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    fetchActiveSession();
+  }, [fetchActiveSession]);
+
+  useEffect(() => {
+    if (!activeSessionId) {
+      setScreenshots([]);
+      return;
+    }
+    setScreenshots([]);
+    void loadSlides(activeSessionId);
+  }, [activeSessionId, loadSlides]);
 
   const connectWebSocket = useCallback(() => {
     // Disconnect if already connected
@@ -151,6 +320,89 @@ export default function App() {
     };
   }, [summaryWsUrl]);
 
+  useEffect(() => {
+    if (!keyframesWsUrl) {
+      console.error('NEXT_PUBLIC_KEYFRAMES_WS_URL is not configured.');
+      return;
+    }
+
+    const ws = new WebSocket(keyframesWsUrl);
+    keyframesSocketRef.current = ws;
+
+    ws.onopen = () => {
+      console.log('Connected to backend keyframe server.');
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type !== 'keyframe_detected') {
+          return;
+        }
+
+        const sessionId = typeof data.session_id === 'string' ? data.session_id : null;
+        const storageUrl = typeof data.storage_url === 'string' ? data.storage_url : null;
+        const storageKey = typeof data.storage_key === 'string' ? data.storage_key : null;
+        const resolvedUrl = resolveKeyframeUrl(storageUrl);
+        const capturedAt = typeof data.captured_at === 'string' ? data.captured_at : null;
+        let keyframeId = typeof data.id === 'string' && data.id ? data.id : null;
+
+        if (!sessionId) {
+          console.warn('Received keyframe without session_id, ignoring.');
+          return;
+        }
+
+        if (!resolvedUrl) {
+          console.warn('Unable to resolve keyframe storage URL:', storageUrl);
+          return;
+        }
+
+        if (!keyframeId) {
+          keyframeId = storageKey || `${sessionId}-${resolvedUrl}`;
+        }
+
+        const currentActive = activeSessionIdRef.current;
+        if (currentActive !== sessionId) {
+          activeSessionIdRef.current = sessionId;
+          setActiveSessionId(sessionId);
+          setScreenshots([]);
+        }
+
+        if (activeSessionIdRef.current !== sessionId) {
+          return;
+        }
+
+        setScreenshots((prev) => {
+          const filtered = prev.filter((item) => item.id !== keyframeId);
+          const nextEntry: SlideEntry = {
+            id: keyframeId!,
+            url: resolvedUrl,
+            sessionId,
+            capturedAt,
+            storageKey,
+          };
+          return [nextEntry, ...filtered].slice(0, KEYFRAME_HISTORY_LIMIT);
+        });
+      } catch (error) {
+        console.error('Error parsing keyframe WebSocket message:', error);
+      }
+    };
+
+    ws.onerror = (event) => {
+      console.error('Keyframe WebSocket Error:', event);
+    };
+
+    ws.onclose = () => {
+      console.log('Keyframe WebSocket closed.');
+      keyframesSocketRef.current = null;
+    };
+
+    return () => {
+      keyframesSocketRef.current = null;
+      ws.close();
+    };
+  }, [keyframesWsUrl, resolveKeyframeUrl]);
+
   // Connect on mount and handle cleanup
   useEffect(() => {
     setPageTitle('Live Recording'); // Set the page title
@@ -158,6 +410,7 @@ export default function App() {
 
     return () => {
       webSocketRef.current?.close(); // Disconnect on unmount
+      keyframesSocketRef.current?.close();
     };
   }, [connectWebSocket, setPageTitle]);
 
@@ -171,13 +424,16 @@ export default function App() {
         {/* Left Column: Key Visuals */}
         <div className="flex-1 space-y-4">
           <h2 className="text-2xl font-semibold text-gray-800">Key Visuals</h2>
+          <p className="text-sm text-gray-500">
+            {activeSessionId ? `Showing slides for session ${activeSessionId}` : 'Waiting for an active session…'}
+          </p>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             {screenshots.length > 0 ? (
-              screenshots.map((src, index) => (
-                <div key={index} className="relative aspect-video bg-gray-200 rounded-lg overflow-hidden shadow-sm">
+              screenshots.map(({ id, url }) => (
+                <div key={id} className="relative aspect-video bg-gray-200 rounded-lg overflow-hidden shadow-sm">
                   <Image
-                    src={src}
-                    alt={`Screenshot ${index + 1}`}
+                    src={url}
+                    alt="Detected slide keyframe"
                     fill
                     className="object-cover"
                     unoptimized
@@ -185,12 +441,10 @@ export default function App() {
                 </div>
               ))
             ) : (
-              <p className="text-gray-500 col-span-full">No key visuals for this recording yet.</p>
+              <p className="text-gray-500 col-span-full">
+                {activeSessionId ? 'No key visuals captured for this session yet.' : 'Start streaming to capture key visuals.'}
+              </p>
             )}
-            {/* Example of a placeholder */}
-            <div className="aspect-video bg-gray-200 rounded-lg overflow-hidden shadow-sm flex items-center justify-center">
-              <span className="text-gray-400 text-sm">Example Visual</span>
-            </div>
           </div>
         </div>
 

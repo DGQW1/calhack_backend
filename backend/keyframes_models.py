@@ -47,6 +47,8 @@ class SlideCandidate:
     end_ms: Optional[int] = None
     storage_url: Optional[str] = None
     transcript_text: Optional[str] = None
+    session_id: Optional[str] = None
+    storage_key: Optional[str] = None
     id: str = ""
 
     def __post_init__(self) -> None:
@@ -67,5 +69,8 @@ class SlideCandidate:
         sequence = self.metadata.get("sequence")
         if sequence is not None:
             payload["sequence"] = sequence
+        if self.session_id:
+            payload["session_id"] = self.session_id
+        if self.storage_key:
+            payload["storage_key"] = self.storage_key
         return payload
-

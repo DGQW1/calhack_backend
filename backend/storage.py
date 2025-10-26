@@ -7,6 +7,7 @@ import pathlib
 import uuid
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import urljoin
 
 try:
     import boto3
@@ -70,25 +71,62 @@ class SlideStorage:
 
         # Default to local directory under backend/slide_storage
         root = pathlib.Path(os.getenv("SLIDE_STORAGE_LOCAL_PATH", "slide_storage"))
-        base_url = os.getenv("SLIDE_STORAGE_BASE_URL", root.resolve().as_uri())
+        base_url = os.getenv("SLIDE_STORAGE_BASE_URL")
+        if not base_url:
+            base_url = "http://localhost:8000/slides"
         return cls(mode="local", base_url=base_url, local_dir=root)
 
-    def store_image(self, payload: bytes, *, extension: str = "jpg", key: Optional[str] = None) -> StorageResult:
+    def _normalize_key(self, storage_key: str) -> str:
+        return storage_key.strip("/\\")
+
+    def _build_relative_key(self, storage_key: str, session_id: Optional[str]) -> str:
+        parts: list[str] = []
+        if session_id:
+            parts.append(self._normalize_key(session_id))
+        parts.append(self._normalize_key(storage_key))
+        return "/".join(parts)
+
+    def _public_url(self, relative_key: str) -> str:
+        if not self.base_url:
+            return relative_key
+        base = self.base_url if self.base_url.endswith("/") else f"{self.base_url}/"
+        return urljoin(base, relative_key)
+
+    def build_public_url(self, storage_key: str, session_id: Optional[str] = None) -> str:
+        """
+        Construct a public URL for a stored image without uploading a new payload.
+        """
+        relative_key = self._build_relative_key(storage_key, session_id)
+        return self._public_url(relative_key)
+
+    def store_image(
+        self,
+        payload: bytes,
+        *,
+        extension: str = "jpg",
+        key: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> StorageResult:
         storage_key = key or f"{uuid.uuid4().hex}.{extension}"
+        relative_key = self._build_relative_key(storage_key, session_id)
 
         if self.mode == "local":
             assert self.local_dir is not None  # for mypy
-            destination = self.local_dir / storage_key
+            destination = self.local_dir / pathlib.Path(relative_key)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(payload)
-            url = f"{self.base_url}/{storage_key}"
-            return StorageResult(url=url, storage_key=str(destination))
+            url = self._public_url(relative_key)
+            return StorageResult(url=url, storage_key=relative_key)
 
         if self.mode == "s3":
             assert boto3 is not None
             if not self.s3_bucket:
                 raise RuntimeError("S3 bucket not configured for slide storage.")
-            key_path = f"{self.s3_prefix}/{storage_key}" if self.s3_prefix else storage_key
+            s3_parts = []
+            if self.s3_prefix:
+                s3_parts.append(self._normalize_key(self.s3_prefix))
+            s3_parts.append(relative_key)
+            key_path = "/".join(s3_parts)
             session_kwargs = {}
             if self.s3_region:
                 session_kwargs["region_name"] = self.s3_region
@@ -104,7 +142,7 @@ class SlideStorage:
             except (ClientError, BotoCoreError) as exc:  # pragma: no cover - difficult to simulate
                 raise RuntimeError(f"Failed to upload keyframe to S3: {exc}") from exc
 
-            url = f"{self.base_url}/{storage_key}" if self.base_url else key_path
+            url = self._public_url(relative_key) if self.base_url else key_path
             return StorageResult(url=url, storage_key=key_path)
 
         raise RuntimeError(f"Unsupported storage mode: {self.mode}")

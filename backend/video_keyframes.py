@@ -389,6 +389,7 @@ class VideoChunkProcessor:
         storage: SlideStorage,
         broadcaster: KeyframeBroadcaster,
         detector_params: Optional[SlideDetectionParams] = None,
+        session_id: Optional[str] = None,
     ) -> None:
         self.lecture_id = lecture_id
         self.storage = storage
@@ -398,6 +399,7 @@ class VideoChunkProcessor:
         self.processed_chunks = 0
         self.total_frames_extracted = 0
         self.last_frame_count = 0  # Track how many frames we processed last time
+        self.session_id = session_id
 
     async def process_chunk(self, chunk_bytes: bytes, metadata: Dict[str, Any], websocket: WebSocket) -> None:
         sequence = metadata.get('sequence', '?')
@@ -479,8 +481,14 @@ class VideoChunkProcessor:
 
     async def _persist_and_emit(self, slide: SlideCandidate, websocket: WebSocket) -> None:
         try:
-            result = self.storage.store_image(slide.image_bytes, key=f"{slide.id}.jpg")
+            slide.session_id = self.session_id
+            result = self.storage.store_image(
+                slide.image_bytes,
+                key=f"{slide.id}.jpg",
+                session_id=self.session_id,
+            )
             slide.storage_url = result.url
+            slide.storage_key = result.storage_key
         except Exception as e:
             logger.error(f"Failed to store slide image: {e}")
             # Don't emit this slide if storage fails
