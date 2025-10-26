@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-// Import Link and usePathname
+import React from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -76,10 +76,14 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
         <div className={`flex items-center overflow-hidden ${isCollapsed ? 'justify-center w-full' : ''}`}>
           <header>
               {/* Logo */}
-              <img 
-                src="kantinglogo-crop.png" 
+              <Image 
+                src="/kantinglogo-crop.png" 
                 alt="Startup Logo" 
-                className="w-8 h-8 flex-shrink-0"              />
+                width={32}
+                height={32}
+                className="flex-shrink-0"
+                priority
+              />
           </header>
           {/* Title (hidden when collapsed) */}
           {/* Fixed missing quotes */}
@@ -143,4 +147,3 @@ export default function Sidebar({ isCollapsed, onToggle }: SidebarProps) {
     </div>
   );
 }
-

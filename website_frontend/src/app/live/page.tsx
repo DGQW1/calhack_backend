@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { usePageTitle } from '@/lib/PageTitleContext';
+import Image from 'next/image';
 
 // --- Inline SVG Icons ---
 const IconCheck = ({ className }: { className?: string }) => (
@@ -75,20 +76,20 @@ export default function App() {
   const { setPageTitle } = usePageTitle();
   const webSocketRef = useRef<WebSocket | null>(null);
   const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
+  const wasConnectedRef = useRef(false);
 
   const [isConnected, setIsConnected] = useState(false);
   const [transcription, setTranscription] = useState('');
   const [interimText, setInterimText] = useState('');
   const [modalMessage, setModalMessage] = useState<string | null>(null);
-  
-  // Kept screenshots state, but removed the button to add more.
-  // This section will now just display any screenshots provided (e.g., from a DB).
-  const [screenshots, setScreenshots] = useState<string[]>([]);
+
+  // Placeholder for future key visuals data source.
+  const [screenshots] = useState<string[]>([]);
 
   // --- WebSocket Connection Logic ---
   const summaryWsUrl = process.env.NEXT_PUBLIC_SUMMARY_WS_URL || 'ws://localhost:8000/ws/summary';
 
-  const connectWebSocket = () => {
+  const connectWebSocket = useCallback(() => {
     // Disconnect if already connected
     if (webSocketRef.current) {
       webSocketRef.current.close();
@@ -106,6 +107,7 @@ export default function App() {
     ws.onopen = () => {
       console.log('Connected to backend transcript server.');
       setIsConnected(true);
+      wasConnectedRef.current = true;
       setTranscription('');
       setInterimText('Waiting for summary updates...');
     };
@@ -141,31 +143,23 @@ export default function App() {
 
     ws.onclose = () => {
       console.log('WebSocket closed.');
-      if (isConnected) { // Only show disconnected if it was previously connected
+      if (wasConnectedRef.current) { // Only show disconnected if it was previously connected
         setInterimText('Disconnected from stream.');
       }
       setIsConnected(false);
+      wasConnectedRef.current = false;
     };
-  };
+  }, [summaryWsUrl]);
 
   // Connect on mount and handle cleanup
   useEffect(() => {
     setPageTitle('Live Recording'); // Set the page title
     connectWebSocket(); // Connect when component loads
 
-    // In a real app, you would fetch existing screenshots here
-    // e.g., setScreenshots(await fetchScreenshotsForRecording(recordingId));
-
     return () => {
       webSocketRef.current?.close(); // Disconnect on unmount
-      // Cleanup any object URLs if they were used
-      screenshots.forEach(url => {
-        if (url.startsWith('blob:')) {
-          URL.revokeObjectURL(url);
-        }
-      });
     };
-  }, []); // Empty dependency array, runs once on mount
+  }, [connectWebSocket, setPageTitle]);
 
   return (
     <div className="p-6 md:p-10 space-y-6 bg-gray-50 min-h-screen">
@@ -180,8 +174,14 @@ export default function App() {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
             {screenshots.length > 0 ? (
               screenshots.map((src, index) => (
-                <div key={index} className="aspect-video bg-gray-200 rounded-lg overflow-hidden shadow-sm">
-                  <img src={src} alt={`Screenshot ${index + 1}`} className="w-full h-full object-cover" />
+                <div key={index} className="relative aspect-video bg-gray-200 rounded-lg overflow-hidden shadow-sm">
+                  <Image
+                    src={src}
+                    alt={`Screenshot ${index + 1}`}
+                    fill
+                    className="object-cover"
+                    unoptimized
+                  />
                 </div>
               ))
             ) : (

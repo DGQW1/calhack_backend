@@ -8,9 +8,9 @@ type Message = {
   timestamp: Date;
 };
 
-type ChatBoxProps = {};
+type ChatBoxProps = Record<string, never>;
 
-export default function ChatBox({}: ChatBoxProps) {
+export default function ChatBox(_: ChatBoxProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
