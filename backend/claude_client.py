@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Awaitable, Callable, Optional, Sequence
 
 import httpx
 from dotenv import load_dotenv
@@ -13,13 +13,16 @@ _missing_key_warning_emitted = False
 
 
 DEFAULT_SYSTEM_PROMPT = (
-    "You are a helpful assistant that produces concise rolling summaries of a live lecture. "
-    "Blend the previous summary with the new transcript snippets to produce an updated, coherent summary that also includes contents from the previous summary. "
-    "The summary should be organized and in details. "
+    "You are a helpful assistant that produces concise rolling structured notes of a live lecture. "
+    "Blend the previous notes with the new transcript snippets to produce an updated, coherent notes that also includes contents from the previous summary. "
+    "The notes should be organized and in details. "
     "You should not output anything irrelevant to the lecture itself. "
-    "Do not address specific people, just summarize the content. "
-    "Do not say something like the summary has been updated to reflect this new information. "
+    "Do not address specific people like clients or lecturer, just summarize the content. "
+    "Do not say something like 'the note has been updated to reflect a new information.' "
     "Do not add additional information that is not yet talked about by the lecturer "
+    "You may use notations, dash, sub bulletpoint, indentation to make the notes more structured"
+    "Add empty lines between sections to make it more clearly readable"
+    ""
 )
 
 
@@ -142,8 +145,11 @@ class ClaudeClient:
         await self._client.aclose()
 
 
+SummaryCallback = Callable[[str], Awaitable[None] | None]
+
+
 class TranscriptSummarizer:
-    def __init__(self, config: ClaudeConfig) -> None:
+    def __init__(self, config: ClaudeConfig, on_summary: Optional[SummaryCallback] = None) -> None:
         self._config = config
         self._client = ClaudeClient(config)
         self._buffer: list[str] = []
@@ -151,6 +157,7 @@ class TranscriptSummarizer:
         self._current_summary: Optional[str] = None
         self._task: Optional[asyncio.Task[None]] = None
         self._stop_event = asyncio.Event()
+        self._on_summary = on_summary
 
     def start(self) -> None:
         if self._task is None:
@@ -193,3 +200,10 @@ class TranscriptSummarizer:
         if summary:
             self._current_summary = summary
             logger.info("[Claude Summary] %s", summary)
+            if self._on_summary:
+                try:
+                    result = self._on_summary(summary)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception:  # noqa: BLE001
+                    logger.exception("Summary callback failed.")

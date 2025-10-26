@@ -8,6 +8,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from claude_client import ClaudeConfig, TranscriptSummarizer
 from deepgram_client import DeepgramConfig, DeepgramTranscriber
+from summary_broadcaster import summary_broadcaster
 
 logger = logging.getLogger("backend.streams")
 
@@ -51,7 +52,7 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
     if stream_type == "audio":
         claude_config = ClaudeConfig.from_env()
         if claude_config:
-            summarizer = TranscriptSummarizer(claude_config)
+            summarizer = TranscriptSummarizer(claude_config, on_summary=summary_broadcaster.publish)
             summarizer.start()
 
     try:
@@ -94,6 +95,10 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
                             await deepgram.send_audio(chunk_bytes)
                         except Exception:  # noqa: BLE001
                             logger.exception("Failed to forward audio chunk to Deepgram.")
+                            try:
+                                await deepgram.close()
+                            finally:
+                                deepgram = None
 
             elif chunk_text is not None:
                 metadata["message_format"] = "text"

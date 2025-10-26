@@ -7,6 +7,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from websocket_handlers import StreamStats, handle_stream
+from summary_broadcaster import summary_broadcaster
 
 load_dotenv()
 
@@ -94,6 +95,32 @@ async def video_stream(websocket: WebSocket) -> None:
 @app.websocket("/ws/audio")
 async def audio_stream(websocket: WebSocket) -> None:
     await _websocket_entry(websocket, "audio")
+
+
+@app.websocket("/ws/summary")
+async def summary_stream(websocket: WebSocket) -> None:
+    try:
+        await _require_token(websocket)
+        await websocket.accept()
+
+        subscriber = summary_broadcaster.register()
+        try:
+            latest = summary_broadcaster.latest
+            if latest:
+                await websocket.send_json(latest.to_message())
+
+            while True:
+                update = await subscriber.get()
+                await websocket.send_json(update.to_message())
+        except WebSocketDisconnect:
+            logger.debug("Summary WebSocket disconnected by client.")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error while streaming summaries: %s", exc)
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Internal server error")
+        finally:
+            summary_broadcaster.unregister(subscriber)
+    except PermissionError:
+        logger.warning("Rejected summary stream connection due to invalid token.")
 
 
 @app.get("/health")
