@@ -344,17 +344,21 @@ def _decode_frames(chunk_bytes: bytes) -> tuple[List[np.ndarray], float]:
         # This handles incomplete/fragmented WebM streams better
         try:
             # Add fflags to be more tolerant of incomplete WebM data
-            (
-                ffmpeg
-                .input(input_path, fflags='+genpts+igndts')
-                .output(output_path,
-                       vcodec='libx264',  # Re-encode to H.264
+                (
+                    ffmpeg
+                    .input(input_path, fflags='+genpts+igndts')
+                    .output(output_path,
+                           vcodec='libx264',  # Re-encode to H.264
                        preset='ultrafast',  # Fast encoding
                        loglevel='error',  # Suppress logs except errors
                        **{'movflags': 'frag_keyframe+empty_moov',
                           'avoid_negative_ts': 'make_zero'})  # Fragmented MP4
                 .overwrite_output()
-                .run(capture_stdout=True, capture_stderr=True)
+                .run(
+                    capture_stdout=True,
+                    capture_stderr=True,
+                    cmd=_FFMPEG_BINARY or "ffmpeg",
+                )
             )
         except ffmpeg.Error as e:
             # If FFmpeg fails, the chunk is likely incomplete/corrupted
