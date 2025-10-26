@@ -222,6 +222,11 @@ export default function App() {
     [apiBaseUrl, resolveKeyframeUrl]
   );
 
+  type SessionSummary = {
+    session_id: string;
+    is_active?: boolean;
+  };
+
   const fetchActiveSession = useCallback(async () => {
     if (!apiBaseUrl) {
       return;
@@ -231,10 +236,26 @@ export default function App() {
       if (!response.ok) {
         throw new Error(`Failed to query sessions: ${response.status}`);
       }
-      const body = await response.json();
-      const sessions = Array.isArray(body?.sessions) ? body.sessions : [];
-      const active =
-        sessions.find((session: any) => session && session.is_active) ?? sessions[0];
+      const body = (await response.json()) as { sessions?: unknown };
+      const rawSessions = Array.isArray(body?.sessions) ? body.sessions : [];
+      const sessions: SessionSummary[] = rawSessions.flatMap((session) => {
+        if (
+          session &&
+          typeof session === 'object' &&
+          typeof (session as { session_id?: unknown }).session_id === 'string'
+        ) {
+          const maybeActive = (session as { is_active?: unknown }).is_active;
+          return [
+            {
+              session_id: (session as { session_id: string }).session_id,
+              is_active: typeof maybeActive === 'boolean' ? maybeActive : undefined,
+            },
+          ];
+        }
+        return [];
+      });
+
+      const active = sessions.find((session) => session.is_active) ?? sessions[0];
       if (active?.session_id && active.session_id !== activeSessionIdRef.current) {
         activeSessionIdRef.current = active.session_id;
         setActiveSessionId(active.session_id);
