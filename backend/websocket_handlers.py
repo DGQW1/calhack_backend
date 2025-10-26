@@ -180,12 +180,6 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
             stats.chunks_received += 1
             
             logger.debug("%s", json.dumps(metadata, ensure_ascii=False))
-        finally:
-          if deepgram:
-            await deepgram.close()
-        if summarizer:
-          await summarizer.close()
-    
         logger.info("%s", json.dumps(metadata, ensure_ascii=False))
         return stats
     except WebSocketDisconnect:
@@ -195,6 +189,10 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
         logger.error(f"Error in {stream_type} stream handling: {e}")
         raise
     finally:
+        if deepgram:
+            await deepgram.close()
+        if summarizer:
+          await summarizer.close()
         # Mark stream as disconnected and let session manager handle finalization
         await session_manager.mark_stream_disconnected(session_id, stream_type)
                   
