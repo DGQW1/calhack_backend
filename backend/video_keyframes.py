@@ -10,12 +10,6 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-import cv2
-import ffmpeg
-import numpy as np
-from fastapi import WebSocket
-from skimage.metrics import structural_similarity
-
 try:
     import imageio_ffmpeg  # type: ignore
 except ImportError:  # pragma: no cover - optional dependency
@@ -29,6 +23,15 @@ if not _FFMPEG_BINARY and imageio_ffmpeg is not None:
         _FFMPEG_BINARY = _binary_path
     except Exception:  # pragma: no cover - defensive
         _FFMPEG_BINARY = None
+
+if _FFMPEG_BINARY:
+    os.environ.setdefault("FFMPEG_BINARY", _FFMPEG_BINARY)
+
+import cv2
+import ffmpeg
+import numpy as np
+from fastapi import WebSocket
+from skimage.metrics import structural_similarity
 
 from keyframes_models import SlideCandidate, SlideDetectionParams
 from storage import SlideStorage
