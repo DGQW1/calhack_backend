@@ -16,11 +16,33 @@ import numpy as np
 from fastapi import WebSocket
 from skimage.metrics import structural_similarity
 
+try:
+    import imageio_ffmpeg  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    imageio_ffmpeg = None  # type: ignore
+
+_FFMPEG_BINARY = os.getenv("FFMPEG_BINARY")
+if not _FFMPEG_BINARY and imageio_ffmpeg is not None:
+    try:
+        _binary_path = imageio_ffmpeg.get_ffmpeg_exe()
+        os.environ["FFMPEG_BINARY"] = _binary_path
+        _FFMPEG_BINARY = _binary_path
+    except Exception:  # pragma: no cover - defensive
+        _FFMPEG_BINARY = None
+
 from keyframes_models import SlideCandidate, SlideDetectionParams
 from storage import SlideStorage
 
 
 logger = logging.getLogger("backend.keyframes")
+
+if _FFMPEG_BINARY:
+    logger.info(f"Using ffmpeg binary at {_FFMPEG_BINARY}")
+else:
+    logger.warning(
+        "FFMPEG binary not configured; attempting to use system ffmpeg. "
+        "Set FFMPEG_BINARY env var if ffmpeg is unavailable."
+    )
 
 
 class VideoAccumulator:
