@@ -1,0 +1,9 @@
+# nixpacks.toml (backend service root)
+
+[phases.setup]
+# Add ffmpeg to whatever Nixpacks already planned (the "..." extender keeps defaults).
+nixPkgs = ["...", "ffmpeg"]
+
+[phases.start]
+# Use Railway's PORT if provided; default to 8000 locally.
+cmd = "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"
