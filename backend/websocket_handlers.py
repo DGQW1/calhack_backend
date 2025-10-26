@@ -195,7 +195,22 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
         if deepgram:
             await deepgram.close()
         if summarizer:
-          await summarizer.close()
+            await summarizer.close()
+            if stream_type == "audio" and session:
+                summary_text = summarizer.latest_summary
+                if summary_text:
+                    created_at = None
+                    latest_update = summary_broadcaster.latest
+                    if latest_update and latest_update.summary == summary_text:
+                        created_at = latest_update.created_at
+                    try:
+                        await session.save_summary(summary_text, created_at=created_at)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error(
+                            "Failed to persist summary for session %s: %s",
+                            session_id,
+                            exc,
+                        )
         # Mark stream as disconnected and let session manager handle finalization
         await session_manager.mark_stream_disconnected(session_id, stream_type)
                   

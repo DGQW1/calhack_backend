@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 import tempfile
@@ -70,10 +71,13 @@ class RecordingSession:
         self.audio_metadata: List[Dict] = []
         self.is_active = True
         self.compiled_file: Optional[Path] = None
+        self.final_summary: Optional[str] = None
+        self.final_summary_created_at: Optional[datetime] = None
         
         # Create session directory
         self.session_dir = self.storage_dir / session_id
         self.session_dir.mkdir(exist_ok=True)
+        self.summary_file = self.session_dir / "summary.json"
         
     async def add_video_chunk(self, chunk: bytes, metadata: Dict) -> None:
         """Add a video chunk to the session."""
@@ -92,6 +96,29 @@ class RecordingSession:
         self.audio_chunks.append(chunk)
         self.audio_metadata.append(metadata)
         logger.info(f"Added audio chunk {len(chunk)} bytes to session {self.session_id} (total: {len(self.audio_chunks)} chunks)")
+
+    async def save_summary(self, summary: str, created_at: Optional[datetime] = None) -> Optional[Path]:
+        """
+        Persist the final summary for this session to disk and memory.
+        Returns the path to the saved summary file.
+        """
+        if not summary:
+            return None
+
+        self.final_summary = summary
+        self.final_summary_created_at = created_at or datetime.now(timezone.utc)
+
+        summary_payload = {
+            "session_id": self.session_id,
+            "created_at": self.final_summary_created_at.isoformat(),
+            "summary": summary,
+        }
+
+        async with aiofiles.open(self.summary_file, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(summary_payload, ensure_ascii=False, indent=2))
+
+        logger.info(f"Saved summary for session {self.session_id} at {self.summary_file}")
+        return self.summary_file
     
     async def finalize(self) -> Optional[Path]:
         """

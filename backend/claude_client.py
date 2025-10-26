@@ -176,6 +176,11 @@ class TranscriptSummarizer:
             self._task = None
         await self._client.close()
 
+    @property
+    def latest_summary(self) -> Optional[str]:
+        """Return the most recent summary generated, if any."""
+        return self._current_summary
+
     async def _run(self) -> None:
         try:
             while not self._stop_event.is_set():
