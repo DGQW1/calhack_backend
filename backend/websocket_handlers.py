@@ -4,13 +4,15 @@ import logging
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Deque, Dict, Optional
+from typing import Any, Awaitable, Callable, Deque, Dict, Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
 
 from video_storage import video_storage
 from video_keyframes import VideoChunkProcessor
-
+from claude_client import ClaudeConfig, TranscriptSummarizer
+from deepgram_client import DeepgramConfig, DeepgramTranscriber
+from summary_broadcaster import summary_broadcaster
 
 logger = logging.getLogger("backend.streams")
 
@@ -96,6 +98,16 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
     Returns aggregate stats when the connection closes gracefully.
     """
     stats = StreamStats(stream_type=stream_type)
+    deepgram_config = DeepgramConfig.from_env() if stream_type == "audio" else None
+    deepgram: Optional[DeepgramTranscriber] = None
+    last_client_metadata: Optional[Dict[str, Any]] = None
+    summarizer: Optional[TranscriptSummarizer] = None
+
+    if stream_type == "audio":
+        claude_config = ClaudeConfig.from_env()
+        if claude_config:
+            summarizer = TranscriptSummarizer(claude_config, on_summary=summary_broadcaster.publish)
+            summarizer.start()
 
     # Get or create a shared recording session using the session manager
     session_id = await session_manager.get_or_create_session(stream_type)
@@ -135,8 +147,24 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
                 if session:
                     if stream_type == "video":
                         await session.add_video_chunk(chunk_bytes, metadata)
-                    elif stream_type == "audio":
-                        await session.add_audio_chunk(chunk_bytes, metadata)
+                if stream_type == "audio":
+                    if deepgram_config and deepgram is None:
+                        transcript_handler = summarizer.handle_transcript if summarizer else None
+                        deepgram = await _open_deepgram_transcriber(
+                            deepgram_config, last_client_metadata, transcript_handler
+                        )
+                        if deepgram is None:
+                            deepgram_config = None
+
+                    if deepgram:
+                        try:
+                            await deepgram.send_audio(chunk_bytes)
+                        except Exception:  # noqa: BLE001
+                            logger.exception("Failed to forward audio chunk to Deepgram.")
+                            try:
+                                await deepgram.close()
+                            finally:
+                                deepgram = None
 
             elif chunk_text is not None:
                 metadata["message_format"] = "text"
@@ -144,13 +172,22 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
                 client_meta = _extract_client_metadata(chunk_text)
                 if client_meta:
                     metadata["client_metadata"] = client_meta
+                    if stream_type == "audio":
+                        last_client_metadata = client_meta
             else:
                 metadata["message_format"] = "unknown"
 
             stats.chunks_received += 1
-
-            logger.info("%s", json.dumps(metadata, ensure_ascii=False))
-
+            
+            logger.debug("%s", json.dumps(metadata, ensure_ascii=False))
+        finally:
+          if deepgram:
+            await deepgram.close()
+        if summarizer:
+          await summarizer.close()
+    
+        logger.info("%s", json.dumps(metadata, ensure_ascii=False))
+        return stats
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected for {stream_type} stream, session {session_id}")
         raise
@@ -160,8 +197,7 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
     finally:
         # Mark stream as disconnected and let session manager handle finalization
         await session_manager.mark_stream_disconnected(session_id, stream_type)
-
-
+                  
 async def handle_video_keyframe_stream(
     websocket: WebSocket,
     processor: VideoChunkProcessor,
@@ -243,3 +279,19 @@ async def handle_video_keyframe_stream(
         await processor.finalize(websocket)
 
     return stats
+async def _open_deepgram_transcriber(
+    config: DeepgramConfig,
+    client_metadata: Optional[Dict[str, Any]],
+    transcript_callback: Optional[Callable[[str], Awaitable[None] | None]],
+) -> Optional[DeepgramTranscriber]:
+    transcriber = DeepgramTranscriber(config, on_transcript=transcript_callback)
+    mime_type = None
+    if client_metadata:
+        mime_type = client_metadata.get("mimeType") or client_metadata.get("mime_type")
+    try:
+        await transcriber.connect(mime_type=mime_type)
+        return transcriber
+    except Exception:  # noqa: BLE001
+        logger.exception("Unable to establish Deepgram connection.")
+        await transcriber.close()
+        return None

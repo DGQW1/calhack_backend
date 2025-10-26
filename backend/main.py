@@ -4,16 +4,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status, HTTPException
+from dotenv import load_dotenv
+
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from websocket_handlers import StreamStats, handle_stream
+from websocket_handlers import StreamStats, handle_stream, handle_video_keyframe_stream
 from video_storage import video_storage
 from keyframes_models import SlideDetectionParams
 from storage import SlideStorage
 from video_keyframes import KeyframeBroadcaster, VideoChunkProcessor
-from websocket_handlers import handle_video_keyframe_stream
+from summary_broadcaster import summary_broadcaster
+
+load_dotenv()
 
 
 logger = logging.getLogger("backend")
@@ -276,7 +280,7 @@ async def video_keyframe_stream_endpoint(websocket: WebSocket) -> None:
         except RuntimeError:
             logger.debug("Unable to send connection summary; websocket already closed.")
     except WebSocketDisconnect:
-        logger.info("WebSocket disconnected for %s stream.", stream_type)
+        logger.debug("WebSocket disconnected for %s stream.", stream_type)
     except PermissionError:
         logger.warning("Rejected %s stream connection due to invalid token.", stream_type)
     except Exception as exc:  # noqa: BLE001
@@ -360,6 +364,32 @@ async def keyframe_stream(websocket: WebSocket) -> None:
         logger.exception("Unexpected error while handling %s stream: %s", stream_type, exc)
     finally:
         await keyframe_broadcaster.unregister(websocket)
+
+
+@app.websocket("/ws/summary")
+async def summary_stream(websocket: WebSocket) -> None:
+    try:
+        await _require_token(websocket)
+        await websocket.accept()
+
+        subscriber = summary_broadcaster.register()
+        try:
+            latest = summary_broadcaster.latest
+            if latest:
+                await websocket.send_json(latest.to_message())
+
+            while True:
+                update = await subscriber.get()
+                await websocket.send_json(update.to_message())
+        except WebSocketDisconnect:
+            logger.debug("Summary WebSocket disconnected by client.")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error while streaming summaries: %s", exc)
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Internal server error")
+        finally:
+            summary_broadcaster.unregister(subscriber)
+    except PermissionError:
+        logger.warning("Rejected summary stream connection due to invalid token.")
 
 
 @app.get("/health")

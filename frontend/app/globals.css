@@ -54,6 +54,12 @@ a {
   box-shadow: 0 16px 45px rgba(2, 6, 23, 0.55);
 }
 
+.panel-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .panel-heading {
   display: flex;
   justify-content: space-between;
@@ -207,6 +213,37 @@ a {
   gap: 18px;
 }
 
+.control-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.control-button {
+  flex: 1 1 0;
+  min-width: 180px;
+}
+
+.control-status-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin-top: 20px;
+}
+
+.status-column {
+  flex: 1 1 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.status-column h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: rgba(226, 232, 240, 0.8);
+}
+
 .connection-status h3 {
   margin: 0 0 12px;
   font-size: 0.9rem;
@@ -243,6 +280,18 @@ a {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.status-list.compact {
+  margin-top: 12px;
+}
+
+.status-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
 }
 
 .permission-content {
