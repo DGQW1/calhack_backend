@@ -147,6 +147,9 @@ async def handle_stream(websocket: WebSocket, stream_type: str) -> StreamStats:
                 if session:
                     if stream_type == "video":
                         await session.add_video_chunk(chunk_bytes, metadata)
+                    elif stream_type == "audio":
+                        await session.add_audio_chunk(chunk_bytes, metadata)
+
                 if stream_type == "audio":
                     if deepgram_config and deepgram is None:
                         transcript_handler = summarizer.handle_transcript if summarizer else None
