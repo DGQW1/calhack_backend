@@ -95,25 +95,144 @@ async def _require_token(websocket: WebSocket) -> None:
 
 @app.websocket("/ws/video")
 async def video_stream(websocket: WebSocket) -> None:
+    """Video endpoint - BOTH records chunks for compilation AND detects keyframes."""
     stream_type = "video"
     lecture_id = os.getenv("DEFAULT_LECTURE_ID", "default")
     try:
-        stats = await handle_stream(websocket, stream_type)
-        if stats:
+        await _require_token(websocket)
+        await websocket.accept()
+        start = datetime.now(timezone.utc)
+
+        lecture_id = websocket.query_params.get("lecture_id") or websocket.headers.get("x-lecture-id") or lecture_id
+
+        # Initialize keyframe detector
+        processor = VideoChunkProcessor(
+            lecture_id=lecture_id,
+            storage=slide_storage,
+            broadcaster=keyframe_broadcaster,
+            detector_params=slide_detection_params,
+        )
+
+        await websocket.send_json(
+            {
+                "type": "connection_ack",
+                "stream_type": stream_type,
+                "received_at": start.isoformat(),
+                "lecture_id": lecture_id,
+            }
+        )
+
+        # Get or create a recording session for video compilation
+        from websocket_handlers import session_manager
+        session_id = await session_manager.get_or_create_session(stream_type)
+        session = video_storage.get_session(session_id)
+        logger.info(f"Using session {session_id} for {stream_type} stream with keyframe detection")
+
+        stats = StreamStats(stream_type=stream_type, session_id=session_id)
+        metadata_queue = []
+
+        try:
+            while True:
+                try:
+                    message = await websocket.receive()
+                except Exception as e:
+                    logger.error(f"[{stream_type}] Error receiving message: {e}", exc_info=True)
+                    break
+
+                message_type = message.get("type")
+                if message_type == "websocket.disconnect":
+                    logger.info(f"[{stream_type}] Received disconnect message")
+                    break
+
+                chunk_bytes = message.get("bytes")
+                chunk_text = message.get("text")
+
+                stats.chunks_received += 1
+
+                # Handle metadata (text messages)
+                if chunk_text is not None:
+                    from websocket_handlers import _extract_client_metadata, _utc_timestamp
+                    client_meta = _extract_client_metadata(chunk_text)
+                    if client_meta:
+                        metadata_queue.append(client_meta)
+                    continue
+
+                # Handle binary chunk
+                if chunk_bytes is None:
+                    continue
+
+                stats.bytes_received += len(chunk_bytes)
+
+                # Get metadata for this chunk
+                metadata = metadata_queue.pop(0) if metadata_queue else {}
+                sequence = metadata.get('sequence', 'unknown')
+
+                # 1. Store chunk for video compilation
+                if session:
+                    chunk_metadata = {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "stream_type": stream_type,
+                        "session_id": session_id,
+                        "message_format": "binary",
+                        "chunk_size_bytes": len(chunk_bytes),
+                    }
+                    if metadata:
+                        chunk_metadata["client_metadata"] = metadata
+
+                    await session.add_video_chunk(chunk_bytes, chunk_metadata)
+                    logger.info(f"[{stream_type}] Stored chunk {sequence} for compilation (session {session_id})")
+
+                # 2. Process chunk for keyframe detection
+                try:
+                    await processor.process_chunk(chunk_bytes, metadata, websocket)
+                    logger.info(f"[{stream_type}] Processed chunk {sequence} for keyframe detection")
+                except Exception as e:
+                    logger.error(f"Keyframe detection failed for chunk {sequence}: {e}", exc_info=True)
+
+        except WebSocketDisconnect:
+            logger.info(f"[{stream_type}] WebSocket disconnected")
+        finally:
+            # Finalize keyframe detector
+            logger.info(f"[{stream_type}] Finalizing keyframe processor")
+            await processor.finalize(websocket)
+
+            # Mark stream as disconnected for session manager
+            await session_manager.mark_stream_disconnected(session_id, stream_type)
+
+        # Send summary
+        try:
             summary = {
                 "type": "connection_summary",
                 "stream_type": stream_type,
                 "chunks_received": stats.chunks_received,
                 "bytes_received": stats.bytes_received,
+                "lecture_id": lecture_id,
+                "session_id": session_id,
                 "started_at": start.isoformat(),
                 "ended_at": datetime.now(timezone.utc).isoformat(),
             }
-            
-            # Add session ID for video compilation
-            if stats.session_id:
-                summary["session_id"] = stats.session_id
-                
             await websocket.send_json(summary)
+        except RuntimeError:
+            logger.debug("Unable to send connection summary; websocket already closed.")
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected for %s stream.", stream_type)
+    except PermissionError:
+        logger.warning("Rejected %s stream connection due to invalid token.", stream_type)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected error while handling %s stream: %s", stream_type, exc)
+        try:
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Internal server error")
+        except Exception:
+            pass  # Connection may already be closed
+
+
+@app.websocket("/ws/video-keyframes")
+async def video_keyframe_stream_endpoint(websocket: WebSocket) -> None:
+    """Video keyframe detection endpoint - detects slides using SSIM."""
+    stream_type = "video"
+    lecture_id = os.getenv("DEFAULT_LECTURE_ID", "default")
+    try:
         await _require_token(websocket)
         await websocket.accept()
         start = datetime.now(timezone.utc)
@@ -156,6 +275,51 @@ async def video_stream(websocket: WebSocket) -> None:
             )
         except RuntimeError:
             logger.debug("Unable to send connection summary; websocket already closed.")
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected for %s stream.", stream_type)
+    except PermissionError:
+        logger.warning("Rejected %s stream connection due to invalid token.", stream_type)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Unexpected error while handling %s stream: %s", stream_type, exc)
+        try:
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Internal server error")
+        except Exception:
+            pass  # Connection may already be closed
+
+
+@app.websocket("/ws/audio")
+async def audio_stream(websocket: WebSocket) -> None:
+    """Audio recording endpoint - stores chunks for compilation."""
+    stream_type = "audio"
+    try:
+        await _require_token(websocket)
+        await websocket.accept()
+        start = datetime.now(timezone.utc)
+
+        await websocket.send_json(
+            {
+                "type": "connection_ack",
+                "stream_type": stream_type,
+                "received_at": start.isoformat(),
+            }
+        )
+
+        stats = await handle_stream(websocket, stream_type)
+        if stats:
+            summary = {
+                "type": "connection_summary",
+                "stream_type": stream_type,
+                "chunks_received": stats.chunks_received,
+                "bytes_received": stats.bytes_received,
+                "started_at": start.isoformat(),
+                "ended_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            # Add session ID for video compilation
+            if stats.session_id:
+                summary["session_id"] = stats.session_id
+
+            await websocket.send_json(summary)
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected for %s stream.", stream_type)
     except PermissionError:
