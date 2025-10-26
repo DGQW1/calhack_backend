@@ -9,6 +9,19 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import aiofiles
+
+try:
+    import imageio_ffmpeg  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    imageio_ffmpeg = None  # type: ignore
+
+_FFMPEG_COMPILE_BINARY = os.getenv("FFMPEG_BINARY")
+if not _FFMPEG_COMPILE_BINARY and imageio_ffmpeg is not None:
+    try:
+        _FFMPEG_COMPILE_BINARY = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:  # pragma: no cover - defensive
+        _FFMPEG_COMPILE_BINARY = None
+
 import ffmpeg
 
 logger = logging.getLogger("backend.video_storage")
@@ -227,8 +240,14 @@ class RecordingSession:
                 )
             
             # Run ffmpeg command
+            command = ffmpeg.compile(
+                output,
+                overwrite_output=True,
+                cmd=_FFMPEG_COMPILE_BINARY or "ffmpeg",
+            )
+
             process = await asyncio.create_subprocess_exec(
-                *ffmpeg.compile(output, overwrite_output=True),
+                *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
