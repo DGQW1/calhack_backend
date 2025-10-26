@@ -199,8 +199,7 @@ export default function HomePage() {
       <header className="page-header">
         <h1>Kanting</h1>
         <p>
-          Capture your camera and microphone, preview the feed locally, and stream both
-          channels independently to the FastAPI backend in real time.
+          Record the moment, keep the meaning.
         </p>
       </header>
 
